@@ -114,7 +114,6 @@ const decisionPointSchema = new mongoose.Schema({
 });
 
 // Indexes for performance
-decisionPointSchema.index({ branchingVideoId: 1, timestamp: 1 });
 decisionPointSchema.index({ branchingVideoId: 1, order: 1 });
 decisionPointSchema.index({ isActive: 1 });
 decisionPointSchema.index({ 'metadata.category': 1 });

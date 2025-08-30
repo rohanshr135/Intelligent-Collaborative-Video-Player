@@ -1,4 +1,4 @@
-import expressRateLimit from 'express-rate-limit';
+import expressRateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import Redis from 'ioredis';
 
@@ -214,11 +214,9 @@ const rateLimiters = {
 };
 
 /**
- * Creates a rate limiter middleware from a configuration object
- * @param {object} config - Rate limit configuration
- * @returns {function} Express middleware
+ * Create a rate limiter with specific configuration
  */
-const createRateLimiterFromConfig = (config) => {
+export const createRateLimit = (config) => {
   const options = {
     windowMs: config.windowMs,
     max: config.max,
@@ -233,8 +231,11 @@ const createRateLimiterFromConfig = (config) => {
       return false;
     },
     keyGenerator: (req) => {
-      // Use user ID if authenticated, otherwise IP address
-      return req.user?.id || req.ip;
+      // Use user ID if authenticated, otherwise use IP with proper IPv6 handling
+      if (req.user?.id) {
+        return `user:${req.user.id}`;
+      }
+      return ipKeyGenerator(req);
     }
   };
 
@@ -256,15 +257,15 @@ export const getRateLimit = (limiterName) => {
   const config = rateLimiters[limiterName];
   if (!config) {
     console.warn(`Rate limiter '${limiterName}' not found, using default`);
-    return createRateLimiterFromConfig(rateLimiters['api-general']);
+    return createRateLimit(rateLimiters['api-general']);
   }
-  return createRateLimiterFromConfig(config);
+  return createRateLimit(config);
 };
 
 /**
  * Express middleware factory for rate limiting
  */
-export const createRateLimit = (limiterName, maxOverride, windowMsOverride) => {
+export const rateLimit = (limiterName, maxOverride, windowMsOverride) => {
   let config = rateLimiters[limiterName];
   
   if (!config) {
@@ -280,7 +281,7 @@ export const createRateLimit = (limiterName, maxOverride, windowMsOverride) => {
     config = { ...config, windowMs: windowMsOverride };
   }
 
-  return createRateLimiterFromConfig(config);
+  return createRateLimit(config);
 };
 
 /**
@@ -308,7 +309,7 @@ export const dynamicRateLimit = (limiterName) => {
       }
     }
 
-    const limiter = createRateLimiterFromConfig(config);
+    const limiter = createRateLimit(config);
     limiter(req, res, next);
   };
 };
@@ -323,14 +324,14 @@ export const slidingWindowRateLimit = (limiterName, points, duration) => {
     message: rateLimiters[limiterName]?.message || rateLimiters['api-general'].message
   };
 
-  return createRateLimiterFromConfig(config);
+  return createRateLimit(config);
 };
 
 /**
  * Rate limiting with burst allowance
  */
 export const burstRateLimit = (limiterName, burstMax, sustainedMax, windowMs) => {
-  const burstLimiter = createRateLimiterFromConfig({
+  const burstLimiter = createRateLimit({
     windowMs: 60 * 1000, // 1 minute for burst
     max: burstMax,
     message: {
@@ -340,7 +341,7 @@ export const burstRateLimit = (limiterName, burstMax, sustainedMax, windowMs) =>
     }
   });
 
-  const sustainedLimiter = createRateLimiterFromConfig({
+  const sustainedLimiter = createRateLimit({
     windowMs: windowMs,
     max: sustainedMax,
     message: rateLimiters[limiterName]?.message || {
@@ -359,6 +360,7 @@ export const burstRateLimit = (limiterName, burstMax, sustainedMax, windowMs) =>
 };
 
 export default {
+  rateLimit,
   getRateLimit,
   createRateLimit,
   dynamicRateLimit,

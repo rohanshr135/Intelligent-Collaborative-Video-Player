@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import rateLimit from 'express-rate-limit';
+import expressRateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import User from '../models/User.js';
 import logger from '../utils/logger.js';
@@ -31,7 +31,7 @@ export class AuthorizationError extends Error {
 /**
  * Rate limiting for authentication endpoints
  */
-export const authLimiter = rateLimit({
+export const authLimiter = expressRateLimit({
   store: isRedisAvailable() ? new RedisStore({
     sendCommand: async (...args) => {
       const client = await getRedisClient();
@@ -48,7 +48,12 @@ export const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  keyGenerator: (req) => `auth:${req.ip}:${req.get('User-Agent') || 'unknown'}`
+  keyGenerator: (req) => {
+    // Create a composite key with proper IPv6 handling
+    const ip = ipKeyGenerator(req);
+    const userAgent = req.get('User-Agent') || 'unknown';
+    return `auth:${ip}:${userAgent}`;
+  }
 });
 
 /**

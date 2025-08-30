@@ -2,13 +2,14 @@ import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import { nanoid } from 'nanoid';
 import { createAdapter } from '@socket.io/redis-adapter';
+import { createClient } from 'redis';
 
 import logger from './utils/logger.js';
 import connectDB from './config/db.js';
-import { config, validateConfig } from './config/env.js';
-import { getRedisClient, isRedisAvailable } from './utils/redis.js';
 import syncHandler from './sockets/sync.js';
 import { socketAuth, handleSocketConnection } from './sockets/roomSocket.js';
 
@@ -24,8 +25,7 @@ import branchingRoutes from './routes/branchingRoutes.js';
 import editorRoutes from './routes/editorRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 
-// Validate configuration before starting
-validateConfig();
+dotenv.config();
 
 // Connect to MongoDB
 connectDB();
@@ -36,7 +36,7 @@ const server = http.createServer(app);
 // Socket.IO Server Setup with CORS and security
 const io = new Server(server, {
   cors: {
-    origin: config.corsOrigin,
+    origin: process.env.FRONTEND_URL || ['http://localhost:3000', 'http://localhost:5173'],
     methods: ['GET', 'POST'],
     credentials: true
   },
@@ -53,20 +53,24 @@ const io = new Server(server, {
 });
 
 // Redis adapter for scaling (optional - only if Redis is available)
-if (isRedisAvailable()) {
-  try {
-    const redisClient = await getRedisClient();
-    const pubClient = redisClient.duplicate();
-    const subClient = redisClient.duplicate();
-    
-    await Promise.all([pubClient.connect(), subClient.connect()]);
-    
-    io.adapter(createAdapter(pubClient, subClient));
-    logger.info('Socket.IO Redis adapter connected successfully');
-  } catch (error) {
-    logger.warn('Redis not available for Socket.IO scaling, using memory store:', error.message);
+async function setupRedisAdapter() {
+  if (process.env.REDIS_URL) {
+    try {
+      const pubClient = createClient({ url: process.env.REDIS_URL });
+      const subClient = pubClient.duplicate();
+      
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      
+      io.adapter(createAdapter(pubClient, subClient));
+      logger.info('Socket.IO Redis adapter connected successfully');
+    } catch (error) {
+      logger.warn('Redis not available for Socket.IO scaling, using memory store:', error.message);
+    }
   }
 }
+
+// Setup Redis adapter
+setupRedisAdapter();
 
 // Socket.IO Authentication Middleware
 io.use(socketAuth);
@@ -129,7 +133,7 @@ io.engine.on('connection_error', (err) => {
 
 // Express Middleware
 app.use(cors({
-  origin: config.corsOrigin,
+  origin: process.env.FRONTEND_URL || ['http://localhost:3000', 'http://localhost:5173'],
   credentials: true
 }));
 
@@ -154,9 +158,46 @@ app.get('/health', (req, res) => {
     connections: connectedUsers.size,
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    version: process.env.npm_package_version || '1.0.0',
-    environment: config.nodeEnv
+    version: process.env.npm_package_version || '1.0.0'
   });
+});
+
+// MongoDB status endpoint
+app.get('/db-status', async (req, res) => {
+  try {
+    const dbState = mongoose.connection.readyState;
+    const states = {
+      0: 'disconnected',
+      1: 'connected',
+      2: 'connecting',
+      3: 'disconnecting'
+    };
+    
+    if (dbState === 1) {
+      // Test actual database operation
+      await mongoose.connection.db.admin().ping();
+      res.json({
+        status: 'connected',
+        state: states[dbState],
+        database: mongoose.connection.name,
+        host: mongoose.connection.host,
+        port: mongoose.connection.port,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(503).json({
+        status: 'not connected',
+        state: states[dbState],
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    res.status(503).json({
+      status: 'error',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Socket.IO status endpoint
@@ -223,10 +264,10 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({
     success: false,
     data: null,
-    error: config.nodeEnv === 'production' 
+    error: process.env.NODE_ENV === 'production' 
       ? 'Internal server error' 
       : err.message,
-    ...(config.nodeEnv === 'development' && { stack: err.stack })
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
 });
 
@@ -277,13 +318,16 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // Start server
-server.listen(config.port, '0.0.0.0', () => {
-  logger.info(`🚀 Server running on 0.0.0.0:${config.port}`);
+const PORT = process.env.PORT || 5000;
+const HOST = process.env.HOST || '0.0.0.0';
+
+server.listen(PORT, HOST, () => {
+  logger.info(`🚀 Server running on ${HOST}:${PORT}`);
   logger.info(`📊 Socket.IO enabled with ${io.engine.clientsCount} initial connections`);
-  logger.info(`🔧 Environment: ${config.nodeEnv}`);
-  logger.info(`📡 CORS enabled for: ${config.corsOrigin}`);
+  logger.info(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`📡 CORS enabled for: ${process.env.FRONTEND_URL || 'localhost:3000, localhost:5173'}`);
   
-  if (isRedisAvailable()) {
+  if (process.env.REDIS_URL) {
     logger.info(`🔄 Redis adapter configured for scaling`);
   }
 });

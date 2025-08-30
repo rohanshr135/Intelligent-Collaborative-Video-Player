@@ -14,8 +14,10 @@ const SyncRoomSchema = new mongoose.Schema({
     videoHash: { type: String }
   },
   participants: [ParticipantSchema],
-  expiresAt: { type: Date, default: () => new Date(Date.now() + 1000 * 60 * 60 * 6), index: { expires: '0s' } }
+  expiresAt: { type: Date, default: () => new Date(Date.now() + 1000 * 60 * 60 * 6) }
 }, { timestamps: true });
 
+// TTL index for auto-expiration
+SyncRoomSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
 export const SyncRoom = mongoose.model('SyncRoom', SyncRoomSchema);
-export default SyncRoom;

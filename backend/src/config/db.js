@@ -1,35 +1,23 @@
 import mongoose from 'mongoose';
 import { config } from './env.js';
-import logger from '../utils/logger.js';
 
-export const connectDB = async () => {
+const connectDB = async () => {
   try {
-    const connection = await mongoose.connect(config.mongoUri, { 
+    console.log('Attempting to connect to MongoDB...');
+    console.log('MongoDB URI:', config.mongoUri ? 'URI is set' : 'URI is missing');
+    
+    await mongoose.connect(config.mongoUri, { 
       autoIndex: true,
       serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
+      connectTimeoutMS: 10000,
     });
     
-    logger.info(`MongoDB connected: ${connection.connection.host}`);
-    
-    // Handle connection events
-    mongoose.connection.on('error', (err) => {
-      logger.error('MongoDB connection error:', err);
-    });
-    
-    mongoose.connection.on('disconnected', () => {
-      logger.warn('MongoDB disconnected');
-    });
-    
-    // Graceful shutdown
-    process.on('SIGINT', async () => {
-      await mongoose.connection.close();
-      logger.info('MongoDB connection closed through app termination');
-      process.exit(0);
-    });
-    
+    console.log('✅ MongoDB connected successfully');
   } catch (err) {
-    logger.error('MongoDB connection error:', err.message);
+    console.error('❌ MongoDB connection error:');
+    console.error('Error message:', err.message);
+    console.error('Error code:', err.code);
+    console.error('Full error:', err);
     process.exit(1);
   }
 };

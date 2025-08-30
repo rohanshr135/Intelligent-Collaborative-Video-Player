@@ -75,7 +75,6 @@ const userSessionSchema = new mongoose.Schema({
 // Compound indexes for performance
 userSessionSchema.index({ userId: 1, isActive: 1 });
 userSessionSchema.index({ sessionToken: 1, isActive: 1 });
-userSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Instance methods
 userSessionSchema.methods.updateActivity = function() {

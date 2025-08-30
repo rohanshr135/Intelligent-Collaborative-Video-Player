@@ -94,9 +94,7 @@ const syncSessionSchema = new mongoose.Schema({
 // Indexes for performance
 syncSessionSchema.index({ videoId: 1, isActive: 1 });
 syncSessionSchema.index({ hostUserId: 1, createdAt: -1 });
-syncSessionSchema.index({ sessionCode: 1 });
 syncSessionSchema.index({ isActive: 1, lastActivity: -1 });
-syncSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Virtual for formatted session duration
 syncSessionSchema.virtual('sessionDuration').get(function() {
@@ -150,4 +148,3 @@ syncSessionSchema.pre('save', function(next) {
 });
 
 export const SyncSession = mongoose.model('SyncSession', syncSessionSchema);
-export default SyncSession;

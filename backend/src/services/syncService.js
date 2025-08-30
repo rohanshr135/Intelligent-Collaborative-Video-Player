@@ -1,5 +1,5 @@
-import SyncSession from '../models/SyncSession.js';
-import SyncParticipant from '../models/SyncParticipant.js';
+import { SyncSession } from '../models/SyncSession.js';
+import { SyncParticipant } from '../models/SyncParticipant.js';
 import syncUtils from '../utils/syncUtils.js';
 import generalUtils from '../utils/generalUtils.js';
 import logger from '../utils/logger.js';

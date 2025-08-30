@@ -1,10 +1,8 @@
 import jwt from 'jsonwebtoken';
-import { SyncSession, SyncParticipant } from '../models/index.js';
+import { SyncRoom } from '../models/SyncRoom.js';
 import { BranchingVideo, DecisionPoint, UserChoice } from '../models/index.js';
 import { SceneMarker } from '../models/index.js';
-import SyncRoom from '../models/SyncRoom.js';
 import logger from '../utils/logger.js';
-import { config } from '../config/env.js';
 
 // Store active sessions and participants in memory for quick access
 const activeSessions = new Map();
@@ -21,7 +19,7 @@ export const socketAuth = (socket, next) => {
       return next(new Error('Authentication error: No token provided'));
     }
 
-        const decoded = jwt.verify(token, config.jwt.secret);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     socket.userId = decoded.userId;
     socket.user = decoded;
     

@@ -1,4 +1,18 @@
 // Main model exports for the Video Player application
+export { User } from './User.js';
+export { Video } from './Video.js';
+export { VideoTranscript } from './VideoTranscript.js';
+export { SyncSession } from './SyncSession.js';
+export { SyncParticipant } from './SyncParticipant.js';
+export { BranchingVideo } from './BranchingVideo.js';
+export { DecisionPoint } from './DecisionPoint.js';
+export { UserChoice } from './UserChoice.js';
+export { ViewHistory } from './ViewHistory.js';
+export { SceneMarker } from './SceneMarker.js';
+export { AISummary } from './AISummary.js';
+export { SyncRoom } from './SyncRoom.js';
+
+// Import models for the collections object
 import { User } from './User.js';
 import { Video } from './Video.js';
 import { VideoTranscript } from './VideoTranscript.js';
@@ -11,22 +25,6 @@ import { ViewHistory } from './ViewHistory.js';
 import { SceneMarker } from './SceneMarker.js';
 import { AISummary } from './AISummary.js';
 import { SyncRoom } from './SyncRoom.js';
-
-// Re-export all models
-export { User } from './User.js';
-export { Video } from './Video.js';
-export { VideoTranscript } from './VideoTranscript.js';
-export { SyncSession } from './SyncSession.js';
-export { SyncParticipant } from './SyncParticipant.js';
-export { BranchingVideo } from './BranchingVideo.js';
-export { DecisionPoint } from './DecisionPoint.js';
-export { UserChoice } from './UserChoice.js';
-export { ViewHistory } from './ViewHistory.js';
-export { SceneMarker } from './SceneMarker.js';
-export { AISummary } from './AISummary.js';
-
-// Legacy export for existing code compatibility
-export { SyncRoom } from './SyncRoom.js';
 
 // Model collections for batch operations
 export const models = {

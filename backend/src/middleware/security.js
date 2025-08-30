@@ -1,7 +1,7 @@
 import helmet from 'helmet';
 import cors from 'cors';
 import compression from 'compression';
-import rateLimit from 'express-rate-limit';
+import expressRateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import logger from '../utils/logger.js';
 import { config, isProduction } from '../config/env.js';
@@ -122,6 +122,13 @@ const createRateLimit = (options = {}) => {
     },
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => {
+      // Use user ID if authenticated, otherwise use IP with proper IPv6 handling
+      if (req.user?.id) {
+        return `user:${req.user.id}`;
+      }
+      return ipKeyGenerator(req);
+    },
     skip: (req) => {
       // Skip rate limiting for admin users
       return req.user?.role === 'admin';
@@ -150,7 +157,7 @@ const createRateLimit = (options = {}) => {
     });
   }
 
-  return rateLimit(mergedOptions);
+  return expressRateLimit(mergedOptions);
 };
 
 /**
