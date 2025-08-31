@@ -13,12 +13,17 @@ const connectDB = async () => {
     });
     
     console.log('✅ MongoDB connected successfully');
+    return true;
   } catch (err) {
     console.error('❌ MongoDB connection error:');
     console.error('Error message:', err.message);
     console.error('Error code:', err.code);
     console.error('Full error:', err);
-    process.exit(1);
+    
+    console.log('⚠️  MongoDB connection failed. Server will run with in-memory storage.');
+    console.log('⚠️  Some features may be limited without persistent storage.');
+    
+    return false;
   }
 };
 

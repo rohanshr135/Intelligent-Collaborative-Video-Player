@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRoomStore } from '../state/useRoomStore.js';
-import { createRoom, joinRoom } from '../services/api.js';
-import { joinRoom as socketJoinRoom, leaveRoom as socketLeaveRoom } from '../services/socket.js';
+import { createRoom, joinRoom, fetchState } from '../services/api.js';
+import { joinRoom as socketJoinRoom, leaveRoom as socketLeaveRoom, setRoomVideo } from '../services/socket.js';
 
 export default function RoomControls() {
   const { code, setCode, user, initializeUser, participants, setParticipants } = useRoomStore();
@@ -11,6 +11,7 @@ export default function RoomControls() {
   const [error, setError] = useState('');
   const [roomInfo, setRoomInfo] = useState(null);
   const [showUserSettings, setShowUserSettings] = useState(false);
+  const [videoUrlInput, setVideoUrlInput] = useState('');
 
   // Initialize user on component mount
   useEffect(() => {
@@ -45,6 +46,12 @@ export default function RoomControls() {
         throw new Error(response.error);
       }
       setCode(response.code);
+      // Set the host info immediately when creating
+      if (response.hostId) {
+        console.log('🏠 Room created - setting host:', response.hostId, 'for user:', user.id);
+        useRoomStore.getState().setHost(response.hostId);
+        useRoomStore.getState().setControllers([response.hostId]);
+      }
       setRoomInfo({
         code: response.code,
         roomId: response.roomId,
@@ -86,7 +93,19 @@ export default function RoomControls() {
         throw new Error(response.error);
       }
       setCode(response.code);
-      setParticipants(response.participants || []);
+  setParticipants(response.participants || []);
+  if (response.hostId) {
+    console.log('🏠 Room joined - setting host:', response.hostId, 'for user:', user.id);
+    useRoomStore.getState().setHost(response.hostId);
+  }
+  if (response.controllers) {
+    console.log('🎮 Room joined - setting controllers:', response.controllers);
+    useRoomStore.getState().setControllers(response.controllers);
+  }
+      // Hydrate current state (including shared videoUrl)
+      if (response.state) {
+        useRoomStore.getState().updateState(response.state);
+      }
       setRoomInfo({
         code: response.code,
         participants: response.participants,
@@ -121,6 +140,15 @@ export default function RoomControls() {
     if (currentCode) {
       socketLeaveRoom(currentCode);
     }
+  };
+
+  const applyVideoUrl = async () => {
+    if (!code || !videoUrlInput.trim()) return;
+    console.log('Setting video URL:', videoUrlInput.trim(), 'for room:', code);
+    // Broadcast via socket so all participants update in real-time
+    setRoomVideo(code, videoUrlInput.trim());
+    // Also update local state immediately
+    useRoomStore.getState().updateState({ videoUrl: videoUrlInput.trim() });
   };
 
   const copyShareUrl = () => {
@@ -291,6 +319,25 @@ export default function RoomControls() {
                 </span>
               </div>
             ))}
+          </div>
+          {/* Shared Video URL setter */}
+          <div className="mt-3 pt-3 border-t border-gray-200">
+            <label className="text-sm font-medium text-gray-700">Shared Video URL</label>
+            <div className="flex gap-2 mt-1">
+              <input
+                value={videoUrlInput}
+                onChange={(e) => setVideoUrlInput(e.target.value)}
+                placeholder="https://... (MP4/WebM)"
+                className="flex-1 border border-gray-300 px-2 py-1 rounded text-sm"
+              />
+              <button
+                onClick={applyVideoUrl}
+                className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+              >
+                Set URL
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">All participants will load this URL instantly.</p>
           </div>
         </div>
       )}

@@ -1,7 +1,14 @@
 import genAI from '../services/gemini.js';
 import logger from '../utils/logger.js';
 
+console.log('In summarizer - genAI:', genAI);
+console.log('In summarizer - genAI type:', typeof genAI);
+
 async function getGeminiCompletion(prompt) {
+  if (!genAI) {
+    throw new Error('Gemini AI is not configured. Please check your API key.');
+  }
+  
   const model = genAI.getGenerativeModel({ model: "gemini-pro"});
   const result = await model.generateContent(prompt);
   const response = await result.response;
@@ -18,10 +25,14 @@ export const getSummary = async ({ transcript, untilTimestamp }) => {
   const prompt = `Summarize the following text:\n\n${transcript}`;
 
   try {
+    logger.info('Starting AI summary generation...');
+    logger.info('genAI available:', !!genAI);
+    
     const summary = await getGeminiCompletion(prompt);
+    logger.info('AI summary generated successfully');
     return summary;
   } catch (error) {
-    logger.error('Error getting summary:', error);
+    logger.error('Error getting summary:', error.message);
     throw new Error('Failed to generate summary.');
   }
 };

@@ -1,78 +1,104 @@
 import logger from '../utils/logger.js';
-import { SyncSession, SyncParticipant } from '../models/index.js';
-import { BranchingVideo, DecisionPoint } from '../models/index.js';
+import { SyncRoom } from '../models/SyncRoom.js';
 
 /**
- * Advanced sync handler with lag compensation and smart synchronization
+ * Enhanced sync handler with video syncing, host controls, and lag compensation
  */
 const syncHandler = (io, socket) => {
   
   /**
    * Handle room joining with enhanced features
    */
-  const joinRoom = async ({ roomId, deviceId, deviceName, userAgent }) => {
+  const joinRoom = async ({ roomCode, userId, deviceId, deviceName, userAgent }) => {
     try {
-      // Validate session
-      const session = await SyncSession.findById(roomId);
-      if (!session) {
+      // Validate room
+      const room = await SyncRoom.findOne({ code: roomCode.toUpperCase() });
+      if (!room) {
         return socket.emit('error', { 
           code: 'ROOM_NOT_FOUND', 
           message: 'Room not found' 
         });
       }
 
-      // Check capacity
-      const participantCount = await SyncParticipant.countDocuments({
-        sessionId: roomId,
-        status: 'active'
-      });
+      // Check if room is active
+      if (room.status !== 'active') {
+        return socket.emit('error', { 
+          code: 'ROOM_INACTIVE', 
+          message: 'Room is not active' 
+        });
+      }
 
-      if (participantCount >= session.maxParticipants) {
+      // Check if room is expired
+      if (new Date() > room.expiresAt) {
+        return socket.emit('error', { 
+          code: 'ROOM_EXPIRED', 
+          message: 'Room has expired' 
+        });
+      }
+
+      // Check capacity
+      if (room.participants.length >= room.settings.maxParticipants) {
         return socket.emit('error', { 
           code: 'ROOM_FULL', 
           message: 'Room is at maximum capacity' 
         });
       }
 
-      socket.join(roomId);
-      socket.currentRoom = roomId;
+      socket.join(roomCode);
+      socket.currentRoom = roomCode;
+      socket.userId = userId;
       
-      logger.info(`Device ${deviceId} (${socket.id}) joined room ${roomId}`);
+      logger.info(`Device ${deviceId} (${socket.id}) joined room ${roomCode}`);
       
-      // Create participant record
-      const participant = new SyncParticipant({
-        sessionId: roomId,
-        userId: socket.userId,
-        deviceId: deviceId || `device_${Date.now()}`,
-        deviceName: deviceName || 'Unknown Device',
-        status: 'active',
-        joinedAt: new Date(),
-        userAgent: userAgent || socket.handshake.headers['user-agent']
-      });
+      // Update participant info
+      const now = new Date();
+      const existingParticipant = room.participants.find(p => p.userId === userId);
       
-      await participant.save();
+      if (existingParticipant) {
+        existingParticipant.lastSeen = now;
+        existingParticipant.lastSync = now;
+      } else {
+        // Add new participant
+        const isHost = userId === room.hostId;
+        const canControl = isHost || room.controllers.includes(userId);
+        
+        room.participants.push({
+          userId,
+          isHost,
+          canControl,
+          lastSeen: now,
+          lastSync: now
+        });
+      }
+      
+      await room.save();
 
       // Send current state to new participant
       socket.emit('room_joined', {
-        roomId,
-        currentState: session.currentState,
-        participants: await getActiveParticipants(roomId),
-        sessionInfo: {
-          name: session.name,
-          videoId: session.videoId,
-          settings: session.settings
-        }
+        roomCode,
+        currentState: room.currentState,
+        participants: room.participants,
+        video: room.video,
+        settings: room.settings,
+        hostId: room.hostId,
+        controllers: room.controllers,
+        expiresAt: room.expiresAt
       });
 
       // Notify others
-      socket.to(roomId).emit('user_joined', { 
-        userId: socket.userId,
+      socket.to(roomCode).emit('user_joined', { 
+        userId,
         deviceId: deviceId || `device_${Date.now()}`,
-        deviceName: deviceName || 'Unknown Device'
+        deviceName: deviceName || 'Unknown Device',
+        isHost: userId === room.hostId,
+        canControl: room.controllers.includes(userId) || userId === room.hostId
       });
 
-      // Check for pending decision points
-      await checkForDecisionPoints(io, socket, roomId, session.currentState?.timestamp || 0);
+      // Broadcast updated participant list
+      io.to(roomCode).emit('participants_updated', {
+        participants: room.participants,
+        participantCount: room.participants.length
+      });
 
     } catch (error) {
       logger.error('Error joining room:', error);
@@ -84,72 +110,73 @@ const syncHandler = (io, socket) => {
   };
 
   /**
-   * Enhanced playback event handler with lag compensation
+   * Enhanced playback event handler with host controls and lag compensation
    */
   const handlePlaybackEvent = async (payload) => {
     try {
-      const { roomId, type, timestamp, playbackRate = 1.0, serverCompensation = false } = payload;
+      const { roomCode, type, timestamp, playbackRate = 1.0, userId } = payload;
       
-      if (!roomId || !socket.currentRoom) {
+      if (!roomCode || !socket.currentRoom) {
         return socket.emit('error', { 
           code: 'NOT_IN_ROOM', 
           message: 'Not in any room' 
         });
       }
 
-      // Verify permissions
-      const session = await SyncSession.findById(roomId);
-      if (!session) return;
+      // Verify room and permissions
+      const room = await SyncRoom.findOne({ code: roomCode.toUpperCase() });
+      if (!room) return;
 
-      const canControl = await checkControlPermissions(session, socket.userId);
-      if (!canControl) {
+      const participant = room.participants.find(p => p.userId === userId);
+      if (!participant || !participant.canControl) {
         return socket.emit('error', { 
           code: 'NO_PERMISSION', 
           message: 'No permission to control playback' 
         });
       }
 
-      // Update session state
+      // Update room state
       const updateData = {
         timestamp: parseFloat(timestamp || 0),
         lastUpdate: new Date(),
-        updatedBy: socket.userId
+        updatedBy: userId
       };
 
       if (type === 'play') {
-        updateData.isPlaying = true;
+        updateData.isPlaying = false;
+        updateData.paused = false;
         updateData.playbackRate = parseFloat(playbackRate);
       } else if (type === 'pause') {
         updateData.isPlaying = false;
+        updateData.paused = true;
       } else if (type === 'seek') {
-        // Seeking automatically pauses in most implementations
-        updateData.isPlaying = false;
+        updateData.paused = room.currentState.paused; // Maintain pause state
       }
 
-      await SyncSession.findByIdAndUpdate(roomId, {
-        currentState: { ...session.currentState, ...updateData },
-        lastActivity: new Date()
-      });
+      // Update room state
+      room.currentState = { 
+        ...room.currentState, 
+        ...updateData,
+        lastUpdatedBy: userId,
+        lastUpdatedAt: new Date()
+      };
+      
+      await room.save();
 
-      // Broadcast with server timestamp for lag compensation
+      // Broadcast to all participants with server timestamp for lag compensation
       const eventData = {
         type,
         timestamp: updateData.timestamp,
-        isPlaying: updateData.isPlaying,
-        playbackRate: updateData.playbackRate,
-        userId: socket.userId,
+        paused: room.currentState.paused,
+        playbackRate: room.currentState.playbackRate,
+        userId,
         serverTimestamp: new Date().toISOString(),
-        serverCompensation
+        roomCode
       };
 
-      socket.to(roomId).emit('playback_event', eventData);
+      io.to(roomCode).emit('playback_event', eventData);
 
-      // Check for decision points on seeks/plays
-      if (type === 'seek' || type === 'play') {
-        await checkForDecisionPoints(io, socket, roomId, updateData.timestamp);
-      }
-
-      logger.debug(`Playback event ${type} in room ${roomId} by user ${socket.userId}`);
+      logger.debug(`Playback event ${type} in room ${roomCode} by user ${userId}`);
 
     } catch (error) {
       logger.error('Error handling playback event:', error);
@@ -161,33 +188,31 @@ const syncHandler = (io, socket) => {
   };
 
   /**
-   * Smart sync request with lag detection
+   * Smart sync request with lag detection and compensation
    */
-  const handleSyncRequest = async ({ roomId, requesterId, clientTimestamp }) => {
+  const handleSyncRequest = async ({ roomCode, requesterId, clientTimestamp, userId }) => {
     try {
-      if (!roomId) return;
+      if (!roomCode) return;
 
-      const session = await SyncSession.findById(roomId);
-      if (!session) return;
+      const room = await SyncRoom.findOne({ code: roomCode.toUpperCase() });
+      if (!room) return;
 
       const requestTime = new Date();
       
-      // Ask host or another participant for current state
-      socket.to(roomId).emit('sync_request', { 
+      // Ask other participants for current state
+      socket.to(roomCode).emit('sync_request', { 
         requesterId: socket.id,
-        requesterUserId: socket.userId,
+        requesterUserId: userId,
         serverTimestamp: requestTime.toISOString(),
         clientTimestamp
       });
 
-      // Also send the server's known state
+      // Send server's known state immediately
       socket.emit('sync_server_state', {
-        currentState: session.currentState,
+        currentState: room.currentState,
         serverTimestamp: requestTime.toISOString(),
-        participantCount: await SyncParticipant.countDocuments({
-          sessionId: roomId,
-          status: 'active'
-        })
+        participantCount: room.participants.length,
+        roomCode
       });
 
     } catch (error) {
@@ -198,7 +223,7 @@ const syncHandler = (io, socket) => {
   /**
    * Enhanced sync response with lag calculation
    */
-  const handleSyncResponse = async ({ roomId, requesterId, timestamp, state, responseTimestamp }) => {
+  const handleSyncResponse = async ({ roomCode, requesterId, timestamp, state, responseTimestamp, userId }) => {
     try {
       const serverTime = new Date();
       
@@ -214,7 +239,8 @@ const syncHandler = (io, socket) => {
         state,
         serverTimestamp: serverTime.toISOString(),
         lagMs,
-        providedBy: socket.userId
+        providedBy: userId,
+        roomCode
       });
 
     } catch (error) {
@@ -223,36 +249,38 @@ const syncHandler = (io, socket) => {
   };
 
   /**
-   * Handle heartbeat with performance metrics
+   * Handle heartbeat with performance metrics and lag detection
    */
-  const handleHeartbeat = async ({ roomId, deviceInfo, performance }) => {
+  const handleHeartbeat = async ({ roomCode, deviceInfo, performance, userId }) => {
     try {
-      if (!roomId || !socket.userId) return;
+      if (!roomCode || !userId) return;
 
       const heartbeatTime = new Date();
       
       // Update participant activity and performance metrics
-      await SyncParticipant.findOneAndUpdate(
-        { sessionId: roomId, userId: socket.userId },
-        {
-          lastActiveAt: heartbeatTime,
-          lastHeartbeat: heartbeatTime,
-          deviceInfo: deviceInfo || {},
-          performance: performance || {}
-        }
-      );
+      const room = await SyncRoom.findOne({ code: roomCode.toUpperCase() });
+      if (!room) return;
+
+      const participant = room.participants.find(p => p.userId === userId);
+      if (participant) {
+        participant.lastSeen = heartbeatTime;
+        participant.lastSync = heartbeatTime;
+        participant.lagMs = performance?.lagMs || 0;
+        await room.save();
+      }
 
       // Respond with server timestamp for lag calculation
       socket.emit('heartbeat_ack', {
         serverTimestamp: heartbeatTime.toISOString(),
-        roomId
+        roomCode
       });
 
-      // Check if participant is lagging behind
-      if (performance?.lagMs > 500) { // 500ms threshold
+      // Check if participant is lagging behind significantly
+      if (performance?.lagMs > 1000) { // 1 second threshold
         socket.emit('lag_warning', {
           lagMs: performance.lagMs,
-          suggestion: 'Consider refreshing or checking your connection'
+          suggestion: 'High lag detected. Consider refreshing or checking your connection.',
+          roomCode
         });
       }
 
@@ -264,30 +292,25 @@ const syncHandler = (io, socket) => {
   /**
    * Handle chat messages in sync sessions
    */
-  const handleChatMessage = async ({ roomId, message, type = 'text' }) => {
+  const handleChatMessage = async ({ roomCode, message, type = 'text', userId }) => {
     try {
-      if (!roomId || !message || message.trim().length === 0) return;
+      if (!roomCode || !message || message.trim().length === 0) return;
 
-      const session = await SyncSession.findById(roomId);
-      if (!session || !session.settings.allowChat) {
-        return socket.emit('error', { 
-          code: 'CHAT_DISABLED', 
-          message: 'Chat is disabled in this session' 
-        });
-      }
+      const room = await SyncRoom.findOne({ code: roomCode.toUpperCase() });
+      if (!room) return;
 
       const chatData = {
-        userId: socket.userId,
+        userId,
         message: message.trim().substring(0, 500), // Limit message length
         type,
         timestamp: new Date().toISOString(),
-        roomId
+        roomCode
       };
 
       // Broadcast to room
-      io.to(roomId).emit('chat_message', chatData);
+      io.to(roomCode).emit('chat_message', chatData);
 
-      logger.debug(`Chat message in room ${roomId} from user ${socket.userId}`);
+      logger.debug(`Chat message in room ${roomCode} from user ${userId}`);
 
     } catch (error) {
       logger.error('Error handling chat message:', error);
@@ -297,21 +320,60 @@ const syncHandler = (io, socket) => {
   /**
    * Handle quality change requests
    */
-  const handleQualityChange = async ({ roomId, quality, userId }) => {
+  const handleQualityChange = async ({ roomCode, quality, userId }) => {
     try {
-      if (!roomId) return;
+      if (!roomCode) return;
 
       // Broadcast quality preference
-      socket.to(roomId).emit('quality_change', {
-        userId: socket.userId,
+      socket.to(roomCode).emit('quality_change', {
+        userId,
         quality,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        roomCode
       });
 
-      logger.debug(`Quality change to ${quality} requested by user ${socket.userId} in room ${roomId}`);
+      logger.debug(`Quality change to ${quality} requested by user ${userId} in room ${roomCode}`);
 
     } catch (error) {
       logger.error('Error handling quality change:', error);
+    }
+  };
+
+  /**
+   * Handle participant leaving
+   */
+  const handleLeaveRoom = async ({ roomCode, userId }) => {
+    try {
+      if (!roomCode || !userId) return;
+
+      const room = await SyncRoom.findOne({ code: roomCode.toUpperCase() });
+      if (!room) return;
+
+      // Remove participant
+      room.participants = room.participants.filter(p => p.userId !== userId);
+      await room.save();
+
+      // Leave socket room
+      socket.leave(roomCode);
+      socket.currentRoom = null;
+
+      // Notify others
+      socket.to(roomCode).emit('user_left', {
+        userId,
+        leftAt: new Date().toISOString(),
+        roomCode
+      });
+
+      // Broadcast updated participant list
+      io.to(roomCode).emit('participants_updated', {
+        participants: room.participants,
+        participantCount: room.participants.length
+      });
+
+      logger.info(`User ${userId} left room ${roomCode}`);
+
+    } catch (error) {
+      logger.error('Error handling leave room:', error);
     }
   };
 
@@ -326,26 +388,32 @@ const syncHandler = (io, socket) => {
   socket.on('heartbeat', handleHeartbeat);
   socket.on('chat_message', handleChatMessage);
   socket.on('quality_change', handleQualityChange);
+  socket.on('leave_room', handleLeaveRoom);
 
   socket.on('disconnect', async () => {
     try {
       if (socket.currentRoom && socket.userId) {
         // Update participant status
-        await SyncParticipant.findOneAndUpdate(
-          { sessionId: socket.currentRoom, userId: socket.userId },
-          { 
-            status: 'left',
-            leftAt: new Date()
-          }
-        );
+        const room = await SyncRoom.findOne({ code: socket.currentRoom.toUpperCase() });
+        if (room) {
+          room.participants = room.participants.filter(p => p.userId !== socket.userId);
+          await room.save();
 
-        // Notify room
-        socket.to(socket.currentRoom).emit('user_left', {
-          userId: socket.userId,
-          leftAt: new Date().toISOString()
-        });
+          // Notify room
+          socket.to(socket.currentRoom).emit('user_left', {
+            userId: socket.userId,
+            leftAt: new Date().toISOString(),
+            roomCode: socket.currentRoom
+          });
 
-        logger.info(`User ${socket.userId} left room ${socket.currentRoom} (disconnect)`);
+          // Broadcast updated participant list
+          io.to(socket.currentRoom).emit('participants_updated', {
+            participants: room.participants,
+            participantCount: room.participants.length
+          });
+
+          logger.info(`User ${socket.userId} left room ${socket.currentRoom} (disconnect)`);
+        }
       }
     } catch (error) {
       logger.error('Error handling disconnect cleanup:', error);
@@ -354,61 +422,5 @@ const syncHandler = (io, socket) => {
     logger.info(`Client disconnected: ${socket.id}`);
   });
 };
-
-/**
- * Helper function to get active participants
- */
-async function getActiveParticipants(sessionId) {
-  return await SyncParticipant.find({
-    sessionId,
-    status: 'active'
-  }).select('userId deviceId deviceName joinedAt lastActiveAt');
-}
-
-/**
- * Helper function to check control permissions
- */
-async function checkControlPermissions(session, userId) {
-  if (session.settings.allowControl === 'all') return true;
-  if (session.hostId.toString() === userId) return true;
-  if (session.settings.allowControl === 'moderators' && 
-      session.moderators.includes(userId)) return true;
-  return false;
-}
-
-/**
- * Helper function to check for decision points
- */
-async function checkForDecisionPoints(io, socket, sessionId, currentTimestamp) {
-  try {
-    // Get the session to find the branching video
-    const session = await SyncSession.findById(sessionId).populate('branchingVideoId');
-    if (!session || !session.branchingVideoId) return;
-
-    // Find decision points near current timestamp (within 2 seconds)
-    const decisionPoints = await DecisionPoint.find({
-      branchingVideoId: session.branchingVideoId._id,
-      timestamp: {
-        $gte: currentTimestamp,
-        $lte: currentTimestamp + 2
-      }
-    });
-
-    // Trigger decision points
-    for (const point of decisionPoints) {
-      io.to(sessionId).emit('branch:decision-point', {
-        decisionPointId: point._id,
-        timestamp: point.timestamp,
-        questionText: point.question,
-        choices: point.choices,
-        timeoutSeconds: point.timeoutSeconds || 30,
-        layout: point.layout || 'horizontal'
-      });
-    }
-
-  } catch (error) {
-    logger.error('Error checking decision points:', error);
-  }
-}
 
 export default syncHandler;

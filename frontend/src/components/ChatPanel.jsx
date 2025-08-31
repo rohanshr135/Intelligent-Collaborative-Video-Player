@@ -26,7 +26,7 @@ export default function ChatPanel() {
     const loadMessages = async () => {
       try {
         const response = await api.get(`/chat/${code}/messages`);
-        setMessages(response.data.messages || []);
+        setMessages(response.messages || []);
       } catch (error) {
         console.error('Failed to load messages:', error);
       }

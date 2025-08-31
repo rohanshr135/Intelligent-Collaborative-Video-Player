@@ -99,3 +99,12 @@ export async function updateState(code, state) {
     return { error: error.message };
   }
 }
+
+export async function setRoomVideoUrl(code, videoUrl) {
+  try {
+    return await api.post(`/rooms/${code}/video`, { videoUrl });
+  } catch (error) {
+    console.error('Failed to set room video URL:', error);
+    return { error: error.message };
+  }
+}

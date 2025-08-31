@@ -12,6 +12,14 @@ export { SceneMarker } from './SceneMarker.js';
 export { AISummary } from './AISummary.js';
 export { SyncRoom } from './SyncRoom.js';
 
+// New collaborative features models
+export { VideoSummary } from './VideoSummary.js';
+export { BranchingPoint } from './BranchingPoint.js';
+export { ChatMessage } from './ChatMessage.js';
+export { CollaborativeNote } from './CollaborativeNote.js';
+export { Subtitle } from './Subtitle.js';
+export { VideoAnalytics } from './VideoAnalytics.js';
+
 // Import models for the collections object
 import { User } from './User.js';
 import { Video } from './Video.js';
@@ -25,6 +33,12 @@ import { ViewHistory } from './ViewHistory.js';
 import { SceneMarker } from './SceneMarker.js';
 import { AISummary } from './AISummary.js';
 import { SyncRoom } from './SyncRoom.js';
+import { VideoSummary } from './VideoSummary.js';
+import { BranchingPoint } from './BranchingPoint.js';
+import { ChatMessage } from './ChatMessage.js';
+import { CollaborativeNote } from './CollaborativeNote.js';
+import { Subtitle } from './Subtitle.js';
+import { VideoAnalytics } from './VideoAnalytics.js';
 
 // Model collections for batch operations
 export const models = {
@@ -39,7 +53,13 @@ export const models = {
   ViewHistory,
   SceneMarker,
   AISummary,
-  SyncRoom
+  SyncRoom,
+  VideoSummary,
+  BranchingPoint,
+  ChatMessage,
+  CollaborativeNote,
+  Subtitle,
+  VideoAnalytics
 };
 
 // Model names for dynamic access
@@ -55,7 +75,13 @@ export const modelNames = [
   'ViewHistory',
   'SceneMarker',
   'AISummary',
-  'SyncRoom'
+  'SyncRoom',
+  'VideoSummary',
+  'BranchingPoint',
+  'ChatMessage',
+  'CollaborativeNote',
+  'Subtitle',
+  'VideoAnalytics'
 ];
 
 // Helper function to get model by name

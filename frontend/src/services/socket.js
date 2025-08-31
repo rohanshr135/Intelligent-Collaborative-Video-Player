@@ -42,28 +42,70 @@ export function getSocket() {
             if (roomData.participants) {
               store.setParticipants(roomData.participants);
             }
+            // Update host and controller info from room data
+            if (roomData.hostId) {
+              store.setHost(roomData.hostId);
+            }
+            if (roomData.controllers && Array.isArray(roomData.controllers)) {
+              store.setControllers(roomData.controllers);
+            }
           }
         } catch (error) {
           console.error('Failed to fetch updated participants:', error);
         }
       }
     });
+
+    // Handle successful room join
+    socket.on('room:joined', (roomData) => {
+      console.log('Successfully joined room:', roomData);
+      const store = useRoomStore.getState();
+      
+      // Update room state with received data
+      if (roomData.hostId) {
+        store.setHost(roomData.hostId);
+      }
+      if (roomData.controllers && Array.isArray(roomData.controllers)) {
+        store.setControllers(roomData.controllers);
+      }
+      if (roomData.participants) {
+        store.setParticipants(roomData.participants);
+      }
+      if (roomData.currentState?.videoUrl) {
+        store.updateState({ videoUrl: roomData.currentState.videoUrl });
+      }
+    });
     
     // Legacy video sync events
     socket.on('state:sync', (payload) => useRoomStore.getState().updateState(payload));
     socket.on('seek', ({ t }) => {
-      const video = document.querySelector('video');
-      if (video) video.currentTime = t;
+      useRoomStore.getState().updateState({ t });
     });
     socket.on('play', () => {
-      const video = document.querySelector('video');
-      if (video && video.paused) video.play();
+      useRoomStore.getState().updateState({ paused: false });
     });
     socket.on('pause', ({ t }) => {
+      const updates = { paused: true };
+      if (typeof t === 'number') updates.t = t;
+      useRoomStore.getState().updateState(updates);
+    });
+
+    // Receive canonical video updates for the room
+    socket.on('room:video-updated', ({ roomCode, videoUrl }) => {
+      console.log('Received video update:', { roomCode, videoUrl });
+      const store = useRoomStore.getState();
+      if (store.code !== roomCode) return;
+      
+      store.updateState({ videoUrl });
+      
+      // Force sync for HTML5 video elements (ReactPlayer handles its own updates)
       const video = document.querySelector('video');
-      if (video) {
-        video.currentTime = t;
-        if (!video.paused) video.pause();
+      if (video && !videoUrl.includes('youtube') && !videoUrl.includes('youtu.be')) {
+        if (video.src !== videoUrl) {
+          console.log('Updating video src from socket:', videoUrl);
+          video.src = videoUrl;
+          video.load();
+        }
       }
     });
   }
@@ -82,4 +124,10 @@ export function leaveRoom(roomCode) {
   const socket = getSocket();
   console.log(`Leaving room ${roomCode}`);
   socket.emit('room:leave', { roomCode });
+}
+
+// Set canonical video URL for the current room via Socket.IO
+export function setRoomVideo(roomCode, videoUrl) {
+  const socket = getSocket();
+  socket.emit('room:set-video', { roomCode, videoUrl });
 }
